@@ -62,12 +62,13 @@ def evaluate(model: Any, data: dict[str, Any]) -> dict[str, float]:
     }
 
 
-def log_to_mlflow(model: Any, metrics: dict[str, float]) -> str:
-    """Log the trained model and metrics to MLflow; returns the artifact URI
-    (models:/ URI when registration succeeds, empty string when MLflow is not
-    configured)."""
+def log_to_mlflow(model: Any, metrics: dict[str, float]) -> tuple[str, str]:
+    """Log the trained model and metrics to MLflow; returns (artifact URI,
+    registered version). MLflow assigns the next model version, which keeps
+    every run's registration unique. Empty strings when MLflow is not
+    configured."""
     if not os.environ.get("MLFLOW_TRACKING_URI"):
-        return ""
+        return "", ""
     import mlflow
 
     mlflow.set_experiment("training-pipeline")
@@ -77,14 +78,21 @@ def log_to_mlflow(model: Any, metrics: dict[str, float]) -> str:
         info = mlflow.sklearn.log_model(
             model, name="model", registered_model_name=MODEL_NAME
         )
-        return info.model_uri
+        version = str(getattr(info, "registered_model_version", "") or "")
+        return info.model_uri, version
 
 
-def register_with_control_plane(project_id: str, artifact_uri: str, metrics: dict[str, float]) -> None:
-    """Register the trained model version in the platform registry."""
+def register_with_control_plane(
+    project_id: str, artifact_uri: str, metrics: dict[str, float], version: str = ""
+) -> None:
+    """Register the trained model version in the platform registry. The
+    version comes from MLflow when available, otherwise from the run id, so
+    repeated runs never collide."""
     gateway = os.environ.get("MLAIOPS_URL")
     if not gateway or not project_id:
         return
+    import time as _time
+
     import httpx
 
     httpx.post(
@@ -92,7 +100,7 @@ def register_with_control_plane(project_id: str, artifact_uri: str, metrics: dic
         json={
             "project_id": project_id,
             "name": MODEL_NAME,
-            "version": os.environ.get("MLAIOPS_MODEL_VERSION", "1"),
+            "version": version or os.environ.get("MLAIOPS_MODEL_VERSION") or str(int(_time.time())),
             "artifact_uri": artifact_uri or f"models:/{MODEL_NAME}/latest",
             "metrics": metrics,
         },
@@ -110,6 +118,6 @@ def training_pipeline(run_id: str = "", project_id: str = "") -> dict[str, float
     with reported_step(run_id, "evaluate"):
         metrics = evaluate(model, data)
     with reported_step(run_id, "register-model"):
-        artifact_uri = log_to_mlflow(model, metrics)
-        register_with_control_plane(project_id, artifact_uri, metrics)
+        artifact_uri, version = log_to_mlflow(model, metrics)
+        register_with_control_plane(project_id, artifact_uri, metrics, version)
     return metrics
