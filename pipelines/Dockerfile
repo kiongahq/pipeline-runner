@@ -10,10 +10,13 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir "prefect>=3.0" "scikit-learn==1.7.0" "mlflow==3.1.1" "httpx>=0.27" "boto3>=1.34"
+RUN pip install --no-cache-dir "prefect>=3.0" "scikit-learn==1.7.0" "mlflow==3.1.1" "httpx>=0.27" "boto3>=1.34" "docker==7.1.0"
 
 COPY python/pipelines python/pipelines
 
 ENV PYTHONPATH=/app/python
+ENV MLAIOPS_PIPELINE_LOG_LIMIT_BYTES=65536
+ENV MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS=3600
+ENV MLAIOPS_PIPELINE_PIDS_LIMIT=256
 
 ENTRYPOINT ["python", "-m", "pipelines.serve"]

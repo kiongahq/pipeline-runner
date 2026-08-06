@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from prefect import serve
 
+from .definition import pipeline_definition
 from .training import training_pipeline
 
 
 def main() -> None:
     serve(
         training_pipeline.to_deployment(name="mlaiops"),
+        pipeline_definition.to_deployment(name="mlaiops"),
     )
 
 

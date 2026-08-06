@@ -110,7 +110,15 @@ def register_with_control_plane(
 
 
 @flow(name="training-pipeline")
-def training_pipeline(run_id: str = "", project_id: str = "") -> dict[str, float]:
+def training_pipeline(
+    run_id: str = "",
+    project_id: str = "",
+    parameters: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    # Name-only runs keep this legacy deployment. The gateway sends the same
+    # parameter envelope as definition-backed runs, so accept user parameters even
+    # though the deterministic example flow does not consume them yet.
+    _ = parameters
     with reported_step(run_id, "validate-data"):
         data = validate_data()
     with reported_step(run_id, "train-model"):
