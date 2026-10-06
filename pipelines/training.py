@@ -104,7 +104,7 @@ def register_with_control_plane(
             "artifact_uri": artifact_uri or f"models:/{MODEL_NAME}/latest",
             "metrics": metrics,
         },
-        headers={"X-MLAIOps-Actor": "pipeline-engine"},
+        headers={"X-MLAIOps-Actor": "pipeline-engine", **({"Authorization": f"Bearer {os.environ['MLAIOPS_TOKEN']}"} if os.environ.get("MLAIOPS_TOKEN") else {})},
         timeout=10,
     ).raise_for_status()
 
