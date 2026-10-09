@@ -30,8 +30,10 @@ ML versions match the model server image so trained models load when served.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `MLAIOPS_URL` | | Gateway URL for step reports and logs |
-| `MLAIOPS_INTERNAL_TOKEN` | | Service credential for those reports |
-| `PREFECT_API_URL` | | Prefect server |
+| `MLAIOPS_TOKEN` | | Service credential for those reports (the platform internal token) |
+| `MLFLOW_TRACKING_URI` | | MLflow server for the training pipeline |
+| `MLAIOPS_PIPELINE_NETWORK` | | Docker network node containers join |
+| `PREFECT_API_URL` | | Prefect server (read by Prefect) |
 | `MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS` | `3600` | Default node timeout |
 | `MLAIOPS_PIPELINE_LOG_LIMIT_BYTES` | `65536` | Output tail kept on the node |
 | `MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Streamed output cap per node |
