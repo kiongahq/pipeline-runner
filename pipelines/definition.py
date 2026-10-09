@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any
+import time
+from datetime import datetime, timezone
+from typing import Any, Callable, Protocol
 
 from prefect import flow, task
 
@@ -44,8 +46,25 @@ PASSTHROUGH_ENVIRONMENT = (
 )
 
 
+DEFAULT_MAX_PARALLEL = 8
+MAX_PARALLEL = 64
+
+
 class ContainerJobError(RuntimeError):
     """A container attempt failed after it was created."""
+
+    def __init__(self, message: str, exit_code: int | None = None, workload_id: str = ""):
+        super().__init__(message)
+        self.exit_code = exit_code
+        self.workload_id = workload_id
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def definition_layers(definition: dict[str, Any]) -> list[list[dict[str, Any]]]:
@@ -242,51 +261,61 @@ def _create_container(client: Any, kwargs: dict[str, Any]):
         return client.containers.create(**kwargs)
 
 
-def _run_container_attempt(client: Any, kwargs: dict[str, Any]) -> str:
+def _image_digest(container: Any) -> str:
+    """Best-effort immutable identity of the image a container ran."""
+    image = getattr(container, "image", None)
+    attrs = getattr(image, "attrs", None) or {}
+    digests = attrs.get("RepoDigests") or []
+    if digests:
+        return str(digests[0])
+    return str(getattr(image, "id", "") or "")
+
+
+def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int) -> tuple[str, dict[str, Any]]:
     container = None
     logs = ""
+    facts: dict[str, Any] = {"workload_kind": "docker-container"}
+    limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
     try:
         container = _create_container(client, kwargs)
+        facts["workload_id"] = str(getattr(container, "id", "") or "")[:12]
         container.start()
-        timeout = _bounded_setting(
-            "MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS", DEFAULT_JOB_TIMEOUT_SECONDS, 24 * 60 * 60
-        )
+        facts["image_digest"] = _image_digest(container)
         result = container.wait(timeout=timeout)
-        logs = _bounded_logs(
-            container,
-            _bounded_setting(
-                "MLAIOPS_PIPELINE_LOG_LIMIT_BYTES",
-                DEFAULT_LOG_LIMIT_BYTES,
-                MAX_LOG_LIMIT_BYTES,
-            ),
-        )
+        logs = _bounded_logs(container, limit)
         status = int((result or {}).get("StatusCode", 1))
+        facts["exit_code"] = status
         if status != 0:
-            raise ContainerJobError(f"container exited with status {status}: {logs}")
-        return logs
+            raise ContainerJobError(f"container exited with status {status}: {logs}", status, facts["workload_id"])
+        return logs, facts
     except ContainerJobError:
         raise
     except Exception as error:
         if container is not None and not logs:
             try:
-                logs = _bounded_logs(
-                    container,
-                    _bounded_setting(
-                        "MLAIOPS_PIPELINE_LOG_LIMIT_BYTES",
-                        DEFAULT_LOG_LIMIT_BYTES,
-                        MAX_LOG_LIMIT_BYTES,
-                    ),
-                )
+                logs = _bounded_logs(container, limit)
             except Exception:
                 logs = ""
         detail = f": {logs}" if logs else ""
-        raise ContainerJobError(f"container execution failed: {error}{detail}") from error
+        reason = "timed out" if "timed out" in str(error).lower() or "read timeout" in str(error).lower() else "failed"
+        raise ContainerJobError(
+            f"container execution {reason} after {timeout}s: {error}{detail}" if reason == "timed out" else f"container execution failed: {error}{detail}",
+            None,
+            facts.get("workload_id", ""),
+        ) from error
     finally:
         if container is not None:
             try:
                 container.remove(force=True)
             except Exception as error:
                 print(f"container cleanup failed: {error}")
+
+
+def _job_timeout(job: dict[str, Any]) -> int:
+    configured = int(job.get("timeout_seconds") or 0)
+    if configured > 0:
+        return min(configured, 24 * 60 * 60)
+    return _bounded_setting("MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS", DEFAULT_JOB_TIMEOUT_SECONDS, 24 * 60 * 60)
 
 
 @task(name="pipeline-container-job")
@@ -297,11 +326,14 @@ def run_container_job(
     parameters: dict[str, Any] | None = None,
     dependency_outputs: dict[str, Any] | None = None,
 ) -> Any:
-    """Run one definition job, including its job-specific retry policy."""
+    """Run one definition job with its timeout, retry and backoff policy."""
     parameters = parameters or {}
     dependency_outputs = dependency_outputs or {}
     retries = max(int(job.get("retries", 0) or 0), 0)
+    backoff = max(int(job.get("retry_backoff_seconds", 0) or 0), 0)
     attempts = retries + 1
+    timeout = _job_timeout(job)
+    limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
     client = _docker_client()
     last_error: Exception | None = None
     try:
@@ -312,26 +344,123 @@ def run_container_job(
                 job["name"],
                 "running",
                 f"container {job['image']} attempt {attempt}/{attempts}",
+                attempt=attempt,
+                at=_now(),
             )
             try:
-                logs = _run_container_attempt(client, kwargs)
-            except Exception as error:
+                logs, facts = _run_container_attempt(client, kwargs, timeout)
+            except ContainerJobError as error:
                 last_error = error
                 if attempt < attempts:
+                    if backoff:
+                        _sleep(backoff)
                     continue
-                message = str(error)[-_bounded_setting(
-                    "MLAIOPS_PIPELINE_LOG_LIMIT_BYTES",
-                    DEFAULT_LOG_LIMIT_BYTES,
-                    MAX_LOG_LIMIT_BYTES,
-                ) :]
-                report_step(run_id, job["name"], "failed", message)
+                report_step(
+                    run_id, job["name"], "failed", str(error)[-limit:],
+                    attempt=attempt, exit_code=error.exit_code,
+                    workload_kind="docker-container", workload_id=error.workload_id or None, at=_now(),
+                )
                 raise
-            output = _dependency_output(logs)
-            report_step(run_id, job["name"], "succeeded", logs or "container completed")
-            return output
+            report_step(run_id, job["name"], "succeeded", logs or "container completed", attempt=attempt, at=_now(), **facts)
+            return _dependency_output(logs)
     finally:
         client.close()
     raise ContainerJobError(f"container job failed: {last_error}")
+
+
+class Handle(Protocol):
+    def done(self) -> bool: ...
+    def result(self) -> Any: ...
+
+
+def condition_met(job: dict[str, Any], parameters: dict[str, Any]) -> bool:
+    """`when: {param, equals}` runs the node only if the parameter matches."""
+    condition = job.get("when")
+    if not condition:
+        return True
+    return str(parameters.get(condition.get("param"), "")) == str(condition.get("equals", ""))
+
+
+def execute_ready_set(
+    jobs: list[dict[str, Any]],
+    parameters: dict[str, Any],
+    start: Callable[[dict[str, Any], dict[str, Any]], Handle],
+    report: Callable[..., None],
+    max_parallel: int = DEFAULT_MAX_PARALLEL,
+    poll: Callable[[], None] = lambda: _sleep(0.2),
+) -> tuple[dict[str, Any], dict[str, str]]:
+    """Run a validated DAG, starting each node as soon as its own dependencies
+    have succeeded (not when a whole layer finishes).
+
+    Skipped nodes (unmet `when`) count as satisfied for their dependents and
+    output None. Nodes downstream of a failure are skipped and reported.
+    Returns (outputs, failures).
+    """
+    by_name = {job["name"]: job for job in jobs}
+    order = [job["name"] for layer in definition_layers({"jobs": jobs}) for job in layer]
+    pending = list(order)
+    running: dict[str, Handle] = {}
+    outputs: dict[str, Any] = {}
+    failures: dict[str, str] = {}
+    satisfied: set[str] = set()
+    blocked: set[str] = set()
+
+    while pending or running:
+        progressed = False
+        for name in list(pending):
+            job = by_name[name]
+            dependencies = job["depends_on"]
+            failed_upstream = [dep for dep in dependencies if dep in failures or dep in blocked]
+            if failed_upstream:
+                pending.remove(name)
+                blocked.add(name)
+                report(name, "skipped", f"not run: upstream {', '.join(failed_upstream)} did not succeed")
+                progressed = True
+                continue
+            if not all(dep in satisfied for dep in dependencies):
+                continue
+            if not condition_met(job, parameters):
+                pending.remove(name)
+                satisfied.add(name)
+                outputs[name] = None
+                condition = job["when"]
+                report(name, "skipped", f"condition not met: {condition['param']} != {condition['equals']}")
+                progressed = True
+                continue
+            if len(running) >= max_parallel:
+                break
+            pending.remove(name)
+            running[name] = start(job, {dep: outputs.get(dep) for dep in dependencies})
+            progressed = True
+        for name, handle in list(running.items()):
+            if not handle.done():
+                continue
+            del running[name]
+            progressed = True
+            try:
+                outputs[name] = handle.result()
+                satisfied.add(name)
+            except Exception as error:  # the job already reported its failure
+                failures[name] = str(error)
+        if not progressed:
+            if not running:
+                raise ValueError(f"nodes can never start: {', '.join(pending)}")
+            poll()
+    return outputs, failures
+
+
+class _PrefectHandle:
+    def __init__(self, future: Any):
+        self.future = future
+
+    def done(self) -> bool:
+        state = getattr(self.future, "state", None)
+        if state is None:
+            return True
+        return bool(state.is_final())
+
+    def result(self) -> Any:
+        return self.future.result()
 
 
 @flow(name="pipeline-definition")
@@ -341,30 +470,21 @@ def pipeline_definition(
     parameters: dict[str, Any] | None = None,
     definition: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Execute all ready jobs in each validated DAG layer concurrently."""
+    """Execute a validated DAG with ready-set scheduling and bounded parallelism."""
     definition = definition or {}
     parameters = parameters or {}
-    layers = definition_layers(definition)
-    outputs: dict[str, Any] = {}
-    for layer in layers:
-        futures = []
-        for job in layer:
-            dependencies = {name: outputs[name] for name in job["depends_on"]}
-            future = run_container_job.submit(
-                run_id,
-                project_id,
-                job,
-                parameters,
-                dependencies,
-            )
-            futures.append((job["name"], future))
+    jobs = [job for layer in definition_layers(definition) for job in layer]
+    max_parallel = int(definition.get("max_parallelism") or 0) or _bounded_setting(
+        "MLAIOPS_PIPELINE_MAX_PARALLEL", DEFAULT_MAX_PARALLEL, MAX_PARALLEL
+    )
 
-        failures: list[str] = []
-        for name, future in futures:
-            try:
-                outputs[name] = future.result()
-            except Exception as error:
-                failures.append(f"{name}: {error}")
-        if failures:
-            raise ContainerJobError("pipeline layer failed: " + "; ".join(failures))
+    def start(job: dict[str, Any], dependencies: dict[str, Any]) -> Handle:
+        return _PrefectHandle(run_container_job.submit(run_id, project_id, job, parameters, dependencies))
+
+    def report(name: str, status: str, message: str) -> None:
+        report_step(run_id, name, status, message, at=_now())
+
+    outputs, failures = execute_ready_set(jobs, parameters, start, report, min(max_parallel, MAX_PARALLEL))
+    if failures:
+        raise ContainerJobError("pipeline failed: " + "; ".join(f"{name}: {error}" for name, error in failures.items()))
     return outputs

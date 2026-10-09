@@ -15,17 +15,21 @@ from contextlib import contextmanager
 import httpx
 
 
-def report_step(run_id: str, step: str, status: str, message: str = "") -> None:
+def report_step(run_id: str, step: str, status: str, message: str = "", **facts) -> None:
+    """Report a step transition. Optional facts: attempt, exit_code,
+    workload_kind, workload_id, image_digest, at (ISO-8601 UTC)."""
     gateway = os.environ.get("MLAIOPS_URL")
     if not gateway or not run_id:
         return
     headers = {"X-MLAIOps-Actor": "pipeline-engine"}
     if token := os.environ.get("MLAIOPS_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
+    payload = {"step": step, "status": status, "message": message}
+    payload.update({key: value for key, value in facts.items() if value is not None})
     try:
         httpx.post(
             f"{gateway.rstrip('/')}/api/v1/pipelines/runs/{run_id}/steps",
-            json={"step": step, "status": status, "message": message},
+            json=payload,
             headers=headers,
             timeout=5,
         ).raise_for_status()
