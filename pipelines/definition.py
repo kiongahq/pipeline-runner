@@ -18,13 +18,14 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
 from prefect import flow, task
 
-from .report import report_step
+from .report import LogShipper, report_step
 
 DEFAULT_LOG_LIMIT_BYTES = 64 * 1024
 MAX_LOG_LIMIT_BYTES = 1024 * 1024
@@ -46,6 +47,8 @@ PASSTHROUGH_ENVIRONMENT = (
 )
 
 
+DEFAULT_LOG_STREAM_LIMIT_BYTES = 5 * 1024 * 1024
+MAX_LOG_STREAM_LIMIT_BYTES = 100 * 1024 * 1024
 DEFAULT_MAX_PARALLEL = 8
 MAX_PARALLEL = 64
 
@@ -271,16 +274,42 @@ def _image_digest(container: Any) -> str:
     return str(getattr(image, "id", "") or "")
 
 
-def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int) -> tuple[str, dict[str, Any]]:
+def _follow_logs(container: Any, shipper: LogShipper, limit: int) -> None:
+    """Ship container output line by line until it exits or the cap is hit."""
+    sent, partial = 0, b""
+    try:
+        for chunk in container.logs(stdout=True, stderr=True, stream=True, follow=True):
+            data = partial + (chunk.encode() if isinstance(chunk, str) else bytes(chunk))
+            *lines, partial = data.split(b"\n")
+            for line in lines:
+                if sent >= limit:
+                    shipper.add(f"[log output truncated after {limit} bytes; the full tail is in the step message]")
+                    return
+                sent += len(line) + 1
+                shipper.add(line.decode("utf-8", errors="replace").rstrip("\r"))
+        if partial and sent < limit:
+            shipper.add(partial.decode("utf-8", errors="replace"))
+    except Exception as error:  # streaming is best-effort
+        shipper.add(f"[log streaming stopped: {error}]")
+
+
+def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, run_id: str = "", node: str = "", attempt: int = 1) -> tuple[str, dict[str, Any]]:
     container = None
     logs = ""
     facts: dict[str, Any] = {"workload_kind": "docker-container"}
     limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
+    shipper = None
+    follower = None
     try:
         container = _create_container(client, kwargs)
         facts["workload_id"] = str(getattr(container, "id", "") or "")[:12]
         container.start()
         facts["image_digest"] = _image_digest(container)
+        if run_id:
+            shipper = LogShipper(run_id, node, attempt, facts["workload_id"])
+            stream_limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES", DEFAULT_LOG_STREAM_LIMIT_BYTES, MAX_LOG_STREAM_LIMIT_BYTES)
+            follower = threading.Thread(target=_follow_logs, args=(container, shipper, stream_limit), daemon=True)
+            follower.start()
         result = container.wait(timeout=timeout)
         logs = _bounded_logs(container, limit)
         status = int((result or {}).get("StatusCode", 1))
@@ -304,6 +333,10 @@ def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int) ->
             facts.get("workload_id", ""),
         ) from error
     finally:
+        if follower is not None:
+            follower.join(timeout=5)
+        if shipper is not None:
+            shipper.close()
         if container is not None:
             try:
                 container.remove(force=True)
@@ -348,7 +381,7 @@ def run_container_job(
                 at=_now(),
             )
             try:
-                logs, facts = _run_container_attempt(client, kwargs, timeout)
+                logs, facts = _run_container_attempt(client, kwargs, timeout, run_id, job["name"], attempt)
             except ContainerJobError as error:
                 last_error = error
                 if attempt < attempts:
@@ -449,6 +482,19 @@ def execute_ready_set(
     return outputs, failures
 
 
+class _ValueHandle:
+    """A node whose output was reused from an earlier run."""
+
+    def __init__(self, value: Any):
+        self.value = value
+
+    def done(self) -> bool:
+        return True
+
+    def result(self) -> Any:
+        return self.value
+
+
 class _PrefectHandle:
     def __init__(self, future: Any):
         self.future = future
@@ -478,7 +524,12 @@ def pipeline_definition(
         "MLAIOPS_PIPELINE_MAX_PARALLEL", DEFAULT_MAX_PARALLEL, MAX_PARALLEL
     )
 
+    reuse = definition.get("reuse") or {}
+
     def start(job: dict[str, Any], dependencies: dict[str, Any]) -> Handle:
+        if job["name"] in reuse:
+            report_step(run_id, job["name"], "skipped", "Reused the output of the previous run", at=_now())
+            return _ValueHandle(reuse[job["name"]])
         return _PrefectHandle(run_container_job.submit(run_id, project_id, job, parameters, dependencies))
 
     def report(name: str, status: str, message: str) -> None:

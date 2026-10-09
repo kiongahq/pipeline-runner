@@ -371,3 +371,57 @@ def test_container_job_uses_node_timeout_backoff_and_reports_facts(monkeypatch):
     final_args, final_facts = reports[-1]
     assert final_args[2] == "succeeded" and final_facts["attempt"] == 2
     assert final_facts["exit_code"] == 0 and final_facts["workload_kind"] == "docker-container"
+
+
+def test_flow_reuses_outputs_of_previous_run(monkeypatch):
+    submitted, reports = [], []
+
+    class Immediate:
+        def __init__(self, value):
+            self.value = value
+
+        def result(self):
+            return self.value
+
+    def submit(run_id, project_id, job, parameters, dependencies):
+        submitted.append((job["name"], dependencies))
+        return Immediate(job["name"])
+
+    monkeypatch.setattr(pipeline_module.run_container_job, "submit", submit)
+    monkeypatch.setattr(pipeline_module, "report_step", lambda *args, **facts: reports.append(args))
+    definition = {
+        "jobs": [container_job(name="extract", depends_on=[]), container_job(name="train", depends_on=["extract"])],
+        "reuse": {"extract": {"rows": 12}},
+    }
+    outputs = pipeline_module.pipeline_definition.fn("run-r", "prj-1", {}, definition)
+    assert [name for name, _ in submitted] == ["train"]
+    assert submitted[0][1] == {"extract": {"rows": 12}}
+    assert outputs["extract"] == {"rows": 12}
+    assert reports[0][1:3] == ("extract", "skipped")
+
+
+def test_container_output_is_streamed_to_the_log_store(monkeypatch):
+    from pipelines import report as report_module
+
+    shipped = []
+    monkeypatch.setattr(report_module, "_post_logs", lambda run_id, entries: shipped.extend((run_id, e) for e in entries))
+    client = FakeDockerClient([(0, [b"epoch 1\nepoch ", b"2\n", b'{"done": true}'])])
+    monkeypatch.setattr(pipeline_module, "_docker_client", lambda: client)
+    monkeypatch.setattr(pipeline_module, "report_step", lambda *args, **facts: None)
+    pipeline_module.run_container_job.fn("run-s", "prj-1", container_job(resources={}))
+    messages = [entry["message"] for _, entry in shipped]
+    assert messages == ["epoch 1", "epoch 2", '{"done": true}']
+    assert all(run_id == "run-s" for run_id, _ in shipped)
+    assert shipped[0][1]["node"] == "train" and shipped[0][1]["attempt"] == 1
+
+
+def test_log_streaming_is_capped(monkeypatch):
+    from pipelines import report as report_module
+
+    shipped = []
+    shipper = report_module.LogShipper("run-c", "n", 1, post=lambda run_id, entries: shipped.extend(entries), interval=60)
+    container = FakeContainer(0, [b"x" * 40 + b"\n"] * 10)
+    pipeline_module._follow_logs(container, shipper, 100)
+    shipper.close()
+    assert len(shipped) == 4  # three 41-byte lines exceed 100 bytes, then the notice
+    assert "truncated" in shipped[-1]["message"]
