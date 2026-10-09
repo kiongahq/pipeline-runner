@@ -1,3 +1,25 @@
 __pycache__/
 .pytest_cache/
 .venv/
+.ruff_cache/
+.mypy_cache/
+.tox/
+.nox/
+.coverage*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.env
+.env.*
+!.env.example
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local coding-assistant state.
+.claude/
+.codex/
+.cursor/
+.aider*
