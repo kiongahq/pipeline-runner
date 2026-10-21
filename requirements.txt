@@ -1,9 +1,9 @@
 # Runtime dependencies of the runner image. ML library versions match the model
-# server image (mlflow/Dockerfile in kiongahq/deploy: mlflow 3.1.1 on Python 3.10)
+# server image (mlflow/Dockerfile in kiongahq/deploy: mlflow 3.16.1)
 # so models trained here load there.
 prefect>=3.0
 scikit-learn==1.7.0
-mlflow==3.1.1
+mlflow==3.16.1
 httpx>=0.27
 boto3>=1.34
 docker==7.1.0

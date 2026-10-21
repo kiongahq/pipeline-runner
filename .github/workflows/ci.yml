@@ -10,7 +10,7 @@ jobs:
   python:
     uses: kiongahq/.github/.github/workflows/python.yml@main
     with:
-      python-version: "3.10"       # same as the image
+      python-version: "3.11"       # same as the image
       install: pip install -r requirements-dev.txt
   image:
     needs: python
