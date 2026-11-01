@@ -2,7 +2,7 @@
 # server image (mlflow/Dockerfile in kiongahq/deploy: mlflow 3.17.2)
 # so models trained here load there.
 prefect>=3.0
-scikit-learn==1.7.0
+scikit-learn==1.9.1
 mlflow==3.17.2
 httpx>=0.27
 boto3>=1.34
