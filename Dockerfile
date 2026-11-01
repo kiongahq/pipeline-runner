@@ -3,7 +3,7 @@
 #   docker build -t ghcr.io/kiongahq/pipeline-runner .
 #
 # Python (3.11) and ML library versions are pinned to the model server image
-# (mlflow/Dockerfile in kiongahq/deploy: mlflow 3.16.1), so models
+# (mlflow/Dockerfile in kiongahq/deploy: mlflow 3.17.2), so models
 # trained here load there. Unpinned versions are how training-serving skew
 # happens. requirements.txt is the single list for the image and for tests.
 FROM python:3.11-slim
