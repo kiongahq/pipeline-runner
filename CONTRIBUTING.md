@@ -51,9 +51,9 @@ go run github.com/zricethezav/gitleaks/v8@v8.30.1 git --no-banner --redact .   #
 docker build -t ghcr.io/kiongahq/pipeline-runner:dev .
 ```
 
-On pushes to `main` and on `v*` tags, CI builds the image with the shared image
+On pushes to `main` and published releases, CI builds the image with the shared image
 workflow and publishes `ghcr.io/kiongahq/pipeline-runner` tagged `sha-<short>`,
-`latest` (from `main`) and the semantic version (from tags). Pull requests build the
+`edge` (from `main`); published releases use exact version tags. Pull requests build the
 image without publishing it.
 
 To try a change with the whole platform, build the local stack from your checkout
@@ -104,3 +104,19 @@ exact finding, so any new secret still fails the scan.
 
 By contributing, you agree that your contributions are licensed under the
 [MIT License](LICENCE).
+
+## Release automation
+
+Configure `RELEASE_PLEASE_TOKEN` with Contents, Issues and Pull requests write
+permissions scoped to the participating repositories. Release PRs require
+maintainer review and all required checks; no bypass is granted to automation.
+The sole maintainer can merge after reviewing the diff and passing checks,
+without a separate approval. Restore independent code-owner approval when
+another trusted maintainer joins.
+The workflow reports an error until this credential is configured.
+
+Use reviewed `vX.Y.Z` releases, keep published tags and packages immutable, and
+pin container digests in deployments. Development builds use `edge` and SHA
+references; existing `latest` aliases stop updating. The
+[release handbook](https://kiongahq.github.io/docs/engineering/contributing/releases/)
+covers publication, dependency updates and rollback.
