@@ -60,7 +60,7 @@ deployments named `mlaiops` and executes their runs. Optional limits:
 | `MLAIOPS_PIPELINE_LOG_LIMIT_BYTES` | `65536` | Output tail kept on each step (at most 1 MiB) |
 | `MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Output streamed to the gateway per step (at most 100 MiB). Lines longer than 16 KiB are cut and marked `[line truncated]`; `\r` progress updates are separate lines |
 | `MLAIOPS_PIPELINE_REPORT_DEADLINE_SECONDS` | `120` | How long a terminal step report is retried while the gateway fails (at most 3600) |
-| `MLAIOPS_PIPELINE_REPORT_OUTBOX` | `~/.kionga/report-outbox` | Directory for terminal step reports not yet delivered, replayed at startup; empty disables it. Mount a volume here to keep reports across container re-creation |
+| `MLAIOPS_PIPELINE_REPORT_OUTBOX` | `~/.kionga/report-outbox` | Directory for terminal step reports not yet delivered, replayed at startup and every minute; empty disables it. Mount a volume here to keep reports across container re-creation |
 | `MLAIOPS_PIPELINE_PASSTHROUGH_ENV` | none | Comma-separated runner variables forwarded to every step container, for example `AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY` |
 
 ### Step credentials

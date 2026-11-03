@@ -176,3 +176,40 @@ def test_outbox_files_are_private(gateway, monkeypatch):
     report_module.report_step("run-p", "train", "failed", "x", attempt=1)
     (path,) = _outbox(monkeypatch).glob("*.json")
     assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_running_runner_retries_the_outbox_without_a_restart(gateway, monkeypatch):
+    requests, responses = gateway
+    monkeypatch.setenv(report_module.DEADLINE_VARIABLE, "1")
+    real_monotonic = report_module.time.monotonic
+    ticks = iter(range(0, 1000, 5))
+    monkeypatch.setattr(report_module.time, "monotonic", lambda: next(ticks))
+    responses.append(503)
+    report_module.report_step("run-l", "train", "succeeded", "done", attempt=1)
+    monkeypatch.setattr(report_module.time, "monotonic", real_monotonic)
+    assert len(list(_outbox(monkeypatch).glob("*.json"))) == 1
+
+    waits = []
+
+    class OneShot:
+        def wait(self, interval):
+            waits.append(interval)
+            return True
+
+    report_module.replay_outbox_forever(OneShot(), interval=7)
+    assert waits == [7]
+    assert not list(_outbox(monkeypatch).glob("*.json"))
+    assert json.loads(requests[-1].content)["status"] == "succeeded"
+
+
+def test_replay_loop_survives_a_failing_pass(monkeypatch):
+    def broken(*args, **kwargs):
+        raise RuntimeError("disk gone")
+
+    monkeypatch.setattr(report_module, "replay_outbox", broken)
+
+    class OneShot:
+        def wait(self, interval):
+            return True
+
+    report_module.replay_outbox_forever(OneShot())  # must not raise

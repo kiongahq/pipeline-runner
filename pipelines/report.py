@@ -13,7 +13,7 @@ progress deterministically. Reporting never fails a run, but it is reliable:
   up to a deadline; other 4xx responses are not retried.
 - Terminal reports (succeeded, failed, skipped) are written to an on-disk outbox
   before sending and removed once the gateway answers, so a report lost to a
-  gateway outage or a runner restart is replayed when the runner starts again.
+  gateway outage or a runner restart is replayed at startup and every minute.
 
 The idempotency key and sequence travel as headers because the gateway rejects
 unknown JSON fields in the report body.
@@ -47,6 +47,7 @@ PROGRESS_DEADLINE_SECONDS = 15.0
 BACKOFF_BASE_SECONDS = 0.5
 BACKOFF_CAP_SECONDS = 15.0
 REQUEST_TIMEOUT_SECONDS = 5.0
+OUTBOX_REPLAY_INTERVAL_SECONDS = 60.0
 
 _client_lock = threading.Lock()
 _shared_client: httpx.Client | None = None
@@ -231,6 +232,22 @@ def replay_outbox(deadline: float | None = None) -> dict[str, int]:
             break
         path.unlink(missing_ok=True)
     return counts
+
+
+def replay_outbox_forever(stop: threading.Event, interval: float = OUTBOX_REPLAY_INTERVAL_SECONDS) -> None:
+    """Replay at startup and then periodically, so a run whose final report
+    outlasted its retry deadline finishes once the gateway is back, without
+    waiting for a runner restart. A report still being sent may go out twice with
+    the same Idempotency-Key; applying the same transition again is harmless."""
+    while True:
+        try:
+            counts = replay_outbox()
+            if counts["delivered"] or counts["rejected"]:
+                print(f"replayed undelivered step reports: {counts}")
+        except Exception as error:  # reporting never takes the runner down
+            print(f"step report replay failed: {error}")
+        if stop.wait(interval):
+            return
 
 
 @contextmanager

@@ -70,7 +70,8 @@ exponential backoff and full jitter, up to 15 seconds for `running` and
 other 4xx answers are not retried. Terminal reports are written to the outbox
 (`MLAIOPS_PIPELINE_REPORT_OUTBOX`, default `~/.kionga/report-outbox`, files mode
 0600, no credentials) before sending and removed once the gateway answers.
-`serve.py` replays what is left, oldest first, in a background thread at startup. `reported_step` brackets a block
+`serve.py` replays what is left, oldest first, from a background thread at startup
+and every minute, so a run finishes once the gateway is back, without a restart. `reported_step` brackets a block
 with running and succeeded or failed reports. `LogShipper` streams container output
 to `POST /api/v1/pipelines/runs/{id}/logs` in batches, up to the stream cap.
 Reporting is best effort: a gateway outage never fails a run.
