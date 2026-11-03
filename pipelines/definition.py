@@ -25,6 +25,7 @@ from typing import Any, Callable, Protocol
 
 from prefect import flow, task
 
+from .redact import Redactor, runner_redactor, secret_values
 from .report import LogShipper, report_step
 
 DEFAULT_LOG_LIMIT_BYTES = 64 * 1024
@@ -171,20 +172,25 @@ def _bounded_setting(name: str, default: int, maximum: int) -> int:
     return min(max(configured, 1), maximum)
 
 
-def _bounded_logs(container: Any, limit: int) -> str:
+def _bounded_logs(container: Any, limit: int, redactor: Redactor | None = None) -> str:
     stream = container.logs(stdout=True, stderr=True, stream=True, follow=False)
     if isinstance(stream, (bytes, bytearray, str)):
         stream = [stream]
     tail = bytearray()
+    cut = False
     for chunk in stream:
         raw = chunk.encode() if isinstance(chunk, str) else bytes(chunk)
         if len(raw) >= limit:
+            cut = cut or len(raw) > limit or bool(tail)
             tail = bytearray(raw[-limit:])
         else:
             tail.extend(raw)
             if len(tail) > limit:
+                cut = True
                 del tail[: len(tail) - limit]
-    return tail.decode("utf-8", errors="replace").strip()
+    text = tail.decode("utf-8", errors="replace").strip()
+    # A tail cut from the front can start inside a secret; mask that fragment too.
+    return (redactor or runner_redactor()).redact(text, partial_start=cut)
 
 
 def _dependency_output(logs: str) -> Any:
@@ -314,7 +320,13 @@ def _follow_logs(container: Any, shipper: LogShipper, limit: int) -> None:
         shipper.add(f"[log streaming stopped: {error}]")
 
 
-def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, run_id: str = "", node: str = "", attempt: int = 1) -> tuple[str, dict[str, Any]]:
+def _step_redactor(environment: dict[str, str]) -> Redactor:
+    """The runner's credentials plus the secret-named values of one step."""
+    return runner_redactor().extend(secret_values(environment))
+
+
+def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, run_id: str = "", node: str = "", attempt: int = 1, redactor: Redactor | None = None) -> tuple[str, dict[str, Any]]:
+    redactor = redactor or _step_redactor(kwargs.get("environment") or {})
     container = None
     logs = ""
     facts: dict[str, Any] = {"workload_kind": "docker-container"}
@@ -327,12 +339,12 @@ def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, ru
         container.start()
         facts["image_digest"] = _image_digest(container)
         if run_id:
-            shipper = LogShipper(run_id, node, attempt, facts["workload_id"])
+            shipper = LogShipper(run_id, node, attempt, facts["workload_id"], redactor=redactor)
             stream_limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES", DEFAULT_LOG_STREAM_LIMIT_BYTES, MAX_LOG_STREAM_LIMIT_BYTES)
             follower = threading.Thread(target=_follow_logs, args=(container, shipper, stream_limit), daemon=True)
             follower.start()
         result = container.wait(timeout=timeout)
-        logs = _bounded_logs(container, limit)
+        logs = _bounded_logs(container, limit, redactor)
         status = int((result or {}).get("StatusCode", 1))
         facts["exit_code"] = status
         if status != 0:
@@ -343,13 +355,15 @@ def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, ru
     except Exception as error:
         if container is not None and not logs:
             try:
-                logs = _bounded_logs(container, limit)
+                logs = _bounded_logs(container, limit, redactor)
             except Exception:
                 logs = ""
         detail = f": {logs}" if logs else ""
         reason = "timed out" if "timed out" in str(error).lower() or "read timeout" in str(error).lower() else "failed"
         raise ContainerJobError(
-            f"container execution {reason} after {timeout}s: {error}{detail}" if reason == "timed out" else f"container execution failed: {error}{detail}",
+            redactor.redact(
+                f"container execution {reason} after {timeout}s: {error}{detail}" if reason == "timed out" else f"container execution failed: {error}{detail}"
+            ),
             None,
             facts.get("workload_id", ""),
         ) from error
@@ -392,6 +406,7 @@ def run_container_job(
     last_error: Exception | None = None
     try:
         kwargs = _container_kwargs(run_id, project_id, job, parameters, dependency_outputs)
+        redactor = _step_redactor(kwargs["environment"])
         for attempt in range(1, attempts + 1):
             report_step(
                 run_id,
@@ -402,7 +417,7 @@ def run_container_job(
                 at=_now(),
             )
             try:
-                logs, facts = _run_container_attempt(client, kwargs, timeout, run_id, job["name"], attempt)
+                logs, facts = _run_container_attempt(client, kwargs, timeout, run_id, job["name"], attempt, redactor)
             except ContainerJobError as error:
                 last_error = error
                 if attempt < attempts:
@@ -410,7 +425,7 @@ def run_container_job(
                         _sleep(backoff)
                     continue
                 report_step(
-                    run_id, job["name"], "failed", str(error)[-limit:],
+                    run_id, job["name"], "failed", redactor.redact(str(error)[-limit:], partial_start=True),
                     attempt=attempt, exit_code=error.exit_code,
                     workload_kind="docker-container", workload_id=error.workload_id or None, at=_now(),
                 )
@@ -558,5 +573,12 @@ def pipeline_definition(
 
     outputs, failures = execute_ready_set(jobs, parameters, start, report, min(max_parallel, MAX_PARALLEL))
     if failures:
-        raise ContainerJobError("pipeline failed: " + "; ".join(f"{name}: {error}" for name, error in failures.items()))
+        # Prefect stores this message as the flow run state, outside the gateway.
+        redactor = runner_redactor().extend(
+            value
+            for job in jobs
+            for value in secret_values({str(k): str(v) for k, v in (job.get("environment") or {}).items()})
+        )
+        message = "; ".join(f"{name}: {error}" for name, error in failures.items())
+        raise ContainerJobError(redactor.redact("pipeline failed: " + message))
     return outputs

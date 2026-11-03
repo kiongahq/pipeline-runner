@@ -64,6 +64,14 @@ with running and succeeded or failed reports. `LogShipper` streams container out
 to `POST /api/v1/pipelines/runs/{id}/logs` in batches, up to the stream cap.
 Reporting is best effort: a gateway outage never fails a run.
 
+### `pipelines/redact.py`
+
+`Redactor` masks known secret values with `***`. Each step attempt builds one from
+the runner's credentials and the secret-named values of the step environment
+(`_step_redactor`). `LogShipper.add`, `_bounded_logs`, the failure messages,
+`report_step` and the flow failure exception all pass through it. Text cut at a
+length cap also has a dangling fragment of a secret masked.
+
 ### `pipelines/training.py`
 
 The `training-pipeline` flow. Fixed random seeds make its metrics identical in
@@ -90,6 +98,8 @@ reuse and log caps. `test_pipelines.py` covers the training tasks and reporting.
 - **Step containers never get the runner's credentials.** The service token stays
   in the runner; object-store keys need the step's own `env` or the operator
   allowlist.
+- **No secret value leaves the runner.** Everything sent to the gateway or kept in
+  Prefect state passes through a `Redactor`.
 - **Reporting never fails a run.** Gateway errors are printed and ignored.
 
 ## How it connects to other components

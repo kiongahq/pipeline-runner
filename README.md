@@ -77,6 +77,15 @@ applies to every step on the runner, so use it only on a trusted single-user
 host and prefer keys scoped to the buckets steps need. `MLAIOPS_TOKEN`, the
 platform's internal service token, is never forwarded, even when listed.
 
+Before step output leaves the runner, every value that must not be stored is
+replaced with `***`: in streamed log lines, the output tail, step messages and the
+flow failure message. The masked values are the runner's credentials and the
+values of step `env` variables whose names look secret (`*TOKEN*`, `*SECRET*`,
+`*PASSWORD*`, `*_KEY`, `*_KEY_ID`, `*CREDENTIAL*`, `*PRIVATE*`). Values shorter
+than 6 characters are not masked. Redaction matches exact values, so a step that
+prints an encoded or transformed secret is not covered; keep secrets out of
+output.
+
 ## Documentation
 
 - Product documentation: [Pipelines](https://kiongahq.github.io/docs/guides/pipelines/)

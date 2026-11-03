@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 
 import httpx
 
+from .redact import Redactor, runner_redactor
+
 
 def report_step(run_id: str, step: str, status: str, message: str = "", **facts) -> None:
     """Report a step transition. Optional facts: attempt, exit_code,
@@ -26,7 +28,7 @@ def report_step(run_id: str, step: str, status: str, message: str = "", **facts)
     headers = {"X-MLAIOps-Actor": "pipeline-engine"}
     if token := os.environ.get("MLAIOPS_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
-    payload = {"step": step, "status": status, "message": message}
+    payload = {"step": step, "status": status, "message": runner_redactor().redact(message)}
     payload.update({key: value for key, value in facts.items() if value is not None})
     try:
         httpx.post(
@@ -61,8 +63,9 @@ class LogShipper:
     """
 
     def __init__(self, run_id: str, node: str, attempt: int, workload_id: str = "",
-                 batch: int = 200, interval: float = 1.0, post=None):
+                 batch: int = 200, interval: float = 1.0, post=None, redactor: Redactor | None = None):
         self.run_id, self.node, self.attempt, self.workload_id = run_id, node, attempt, workload_id
+        self.redactor = redactor if redactor is not None else runner_redactor()
         self.batch, self.interval = batch, interval
         self._post = post or _post_logs
         self._pending: list[dict] = []
@@ -71,7 +74,10 @@ class LogShipper:
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
-    def add(self, message: str, stream: str = "") -> None:
+    def add(self, message: str, stream: str = "", partial: bool = False) -> None:
+        """Queue one line. `partial` marks a line cut at a length cap, so a
+        trailing fragment of a secret is masked as well."""
+        message = self.redactor.redact(message, partial_end=partial)
         entry = {"ts": datetime.now(timezone.utc).isoformat(), "node": self.node, "attempt": self.attempt,
                  "workload_kind": "docker-container", "workload_id": self.workload_id, "message": message}
         if stream:
