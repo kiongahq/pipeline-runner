@@ -93,7 +93,9 @@ reuse and log caps. `test_pipelines.py` covers the training tasks and reporting.
   timed out.
 - **Bounded everything.** Parallelism, timeouts, PID limits and log sizes are
   clamped to fixed maximums (64 parallel steps, 24 hours, 4096 processes, 1 MiB
-  kept per step, 100 MiB streamed per step) whatever the environment says.
+  kept per step, 100 MiB streamed per step) whatever the environment says. The log
+  follower buffers at most 16 KiB of an unfinished line (`MAX_LOG_LINE_BYTES`),
+  so a container that never writes a newline cannot exhaust runner memory.
 - **Step containers never get the Docker socket.** Only the runner holds it.
 - **Step containers never get the runner's credentials.** The service token stays
   in the runner; object-store keys need the step's own `env` or the operator

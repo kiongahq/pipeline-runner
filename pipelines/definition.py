@@ -301,21 +301,71 @@ def _image_digest(container: Any) -> str:
     return str(getattr(image, "id", "") or "")
 
 
-def _follow_logs(container: Any, shipper: LogShipper, limit: int) -> None:
-    """Ship container output line by line until it exits or the cap is hit."""
-    sent, partial = 0, b""
+# Longest single log line kept in memory and shipped; the rest of a longer line
+# is dropped up to the next line break.
+MAX_LOG_LINE_BYTES = 16 * 1024
+LINE_TRUNCATED_MARKER = " [line truncated]"
+_LINE_BREAK = re.compile(rb"\r\n|\r|\n")
+
+
+def _follow_logs(container: Any, shipper: LogShipper, limit: int, max_line: int = MAX_LOG_LINE_BYTES) -> None:
+    """Ship container output line by line until it exits or the cap is hit.
+
+    Memory stays bounded whatever the container writes: at most `max_line`
+    bytes of an unfinished line are buffered. `\n`, `\r\n` and a lone `\r`
+    (progress bars) all end a line. At most `limit` bytes of line content are
+    shipped; the line that crosses the cap is cut and followed by a notice.
+    """
+    sent = 0
+    buffer = b""
+    discarding = False  # inside the dropped remainder of an over-long line
+    notice = f"[log output truncated after {limit} bytes; the full tail is in the step message]"
+
+    def ship(raw: bytes) -> bool:
+        """Ship one line; False once the stream cap is reached."""
+        nonlocal sent
+        if sent >= limit:
+            shipper.add(notice)
+            return False
+        cut = len(raw) > max_line
+        raw = raw[:max_line]
+        room = limit - sent
+        capped = len(raw) > room
+        raw = raw[:room]
+        sent += len(raw) + 1
+        text = raw.decode("utf-8", errors="replace")
+        if cut or capped:
+            # Mask a secret the cut left dangling before the marker hides the end.
+            text = shipper.redactor.redact(text, partial_end=True)
+        shipper.add(text + (LINE_TRUNCATED_MARKER if cut and not capped else ""))
+        if capped:
+            shipper.add(notice)
+            return False
+        return True
+
     try:
         for chunk in container.logs(stdout=True, stderr=True, stream=True, follow=True):
-            data = partial + (chunk.encode() if isinstance(chunk, str) else bytes(chunk))
-            *lines, partial = data.split(b"\n")
-            for line in lines:
-                if sent >= limit:
-                    shipper.add(f"[log output truncated after {limit} bytes; the full tail is in the step message]")
+            data = buffer + (chunk.encode() if isinstance(chunk, str) else bytes(chunk))
+            start = 0
+            for match in _LINE_BREAK.finditer(data):
+                if match.group() == b"\r" and match.end() == len(data):
+                    break  # may be the first half of \r\n; decide on the next chunk
+                line, start = data[start:match.start()], match.end()
+                if discarding:
+                    discarding = False
+                    continue
+                if not ship(line):
                     return
-                sent += len(line) + 1
-                shipper.add(line.decode("utf-8", errors="replace").rstrip("\r"))
-        if partial and sent < limit:
-            shipper.add(partial.decode("utf-8", errors="replace"))
+            buffer = data[start:]
+            if discarding:
+                buffer = b"\r" if buffer.endswith(b"\r") else b""
+            elif len(buffer) > max_line:
+                if not ship(buffer):
+                    return
+                discarding, buffer = True, b"\r" if buffer.endswith(b"\r") else b""
+        buffer = buffer.rstrip(b"\r")
+        if buffer and not discarding:
+            ship(buffer)
     except Exception as error:  # streaming is best-effort
         shipper.add(f"[log streaming stopped: {error}]")
 

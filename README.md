@@ -58,7 +58,7 @@ deployments named `mlaiops` and executes their runs. Optional limits:
 | `MLAIOPS_PIPELINE_MAX_PARALLEL` | `8` | Steps running at once in one run (at most `64`) |
 | `MLAIOPS_PIPELINE_PIDS_LIMIT` | `256` | Process limit per step container (at most `4096`) |
 | `MLAIOPS_PIPELINE_LOG_LIMIT_BYTES` | `65536` | Output tail kept on each step (at most 1 MiB) |
-| `MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Output streamed to the gateway per step (at most 100 MiB) |
+| `MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Output streamed to the gateway per step (at most 100 MiB). Lines longer than 16 KiB are cut and marked `[line truncated]`; `\r` progress updates are separate lines |
 | `MLAIOPS_PIPELINE_PASSTHROUGH_ENV` | none | Comma-separated runner variables forwarded to every step container, for example `AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY` |
 
 ### Step credentials
