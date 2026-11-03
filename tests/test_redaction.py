@@ -4,6 +4,8 @@ literal credential."""
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pipelines import definition as pipeline_module
@@ -140,6 +142,12 @@ def test_report_step_redacts_runner_credentials_from_any_message(monkeypatch):
     monkeypatch.setenv("MLAIOPS_URL", "http://gateway")
     monkeypatch.setenv("AWS_SESSION_TOKEN", secret)
     sent = []
-    monkeypatch.setattr(httpx, "post", lambda url, **kw: sent.append(kw["json"]) or httpx.Response(200, request=httpx.Request("POST", url)))
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(json.loads(request.content))
+        return httpx.Response(200)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(report_module, "_client", lambda: client)
     report_module.report_step("run-1", "train-model", "failed", f"boom {secret}")
     assert sent and secret not in sent[0]["message"]

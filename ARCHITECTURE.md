@@ -59,7 +59,18 @@ The container executor.
 ### `pipelines/report.py`
 
 `report_step` posts step transitions to `POST /api/v1/pipelines/runs/{id}/steps`;
-the gateway recomputes run status and progress. `reported_step` brackets a block
+the gateway recomputes run status and progress. Each report carries an
+`Idempotency-Key` header (uuid5 of run, step, attempt and status) and an
+`X-Kionga-Report-Seq` header that increases strictly per run (seeded from the wall
+clock in microseconds, so it also increases across restarts). Both are headers
+because the gateway rejects unknown JSON fields. Transitions of one step are sent
+one at a time, in order. 5xx, 429 and transport errors are retried with
+exponential backoff and full jitter, up to 15 seconds for `running` and
+`MLAIOPS_PIPELINE_REPORT_DEADLINE_SECONDS` (default 120) for terminal reports;
+other 4xx answers are not retried. Terminal reports are written to the outbox
+(`MLAIOPS_PIPELINE_REPORT_OUTBOX`, default `~/.kionga/report-outbox`, files mode
+0600, no credentials) before sending and removed once the gateway answers.
+`serve.py` replays what is left, oldest first, in a background thread at startup. `reported_step` brackets a block
 with running and succeeded or failed reports. `LogShipper` streams container output
 to `POST /api/v1/pipelines/runs/{id}/logs` in batches, up to the stream cap.
 Reporting is best effort: a gateway outage never fails a run.
@@ -102,7 +113,8 @@ reuse and log caps. `test_pipelines.py` covers the training tasks and reporting.
   allowlist.
 - **No secret value leaves the runner.** Everything sent to the gateway or kept in
   Prefect state passes through a `Redactor`.
-- **Reporting never fails a run.** Gateway errors are printed and ignored.
+- **Reporting never fails a run.** Gateway errors are retried, then printed; an
+  undelivered terminal report waits in the outbox for the next start.
 
 ## How it connects to other components
 
