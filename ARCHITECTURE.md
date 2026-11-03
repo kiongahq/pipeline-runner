@@ -46,8 +46,10 @@ The container executor.
   `no-new-privileges`, a PID limit, labels and the optional network.
 - `_container_environment` gives each step `KIONGA_RUN_ID`, `KIONGA_PROJECT_ID`,
   `KIONGA_STEP_NAME`, `KIONGA_PARAMETERS` and `KIONGA_DEPENDENCY_OUTPUTS` (JSON),
-  the step's own `environment`, and a fixed passthrough list
-  (`PASSTHROUGH_ENVIRONMENT`: gateway URL and token, MLflow and S3 settings).
+  the step's own `environment`, the connection settings in
+  `PASSTHROUGH_ENVIRONMENT` (gateway, MLflow and S3 endpoints, no credentials)
+  and the operator allowlist `MLAIOPS_PIPELINE_PASSTHROUGH_ENV`
+  (`passthrough_names`). `MLAIOPS_TOKEN` is never forwarded.
 - `_dependency_output` reads a step's output from its logs: the whole output if it
   is JSON, else the last line if that is JSON, else the raw text.
 - `pipeline_definition` is the flow. It reuses outputs listed in the definition's
@@ -85,6 +87,9 @@ reuse and log caps. `test_pipelines.py` covers the training tasks and reporting.
   clamped to fixed maximums (64 parallel steps, 24 hours, 4096 processes, 1 MiB
   kept per step, 100 MiB streamed per step) whatever the environment says.
 - **Step containers never get the Docker socket.** Only the runner holds it.
+- **Step containers never get the runner's credentials.** The service token stays
+  in the runner; object-store keys need the step's own `env` or the operator
+  allowlist.
 - **Reporting never fails a run.** Gateway errors are printed and ignored.
 
 ## How it connects to other components

@@ -35,16 +35,25 @@ MAX_PIDS_LIMIT = 4096
 DEFAULT_JOB_CPU = "500m"
 DEFAULT_JOB_MEMORY = "1Gi"
 
+# Connection settings every step may receive: endpoints only, never a
+# credential. Step containers run images named by pipeline authors, so the
+# runner's own identity (MLAIOPS_TOKEN) and object-store keys stay in the runner.
 PASSTHROUGH_ENVIRONMENT = (
     "MLAIOPS_URL",
-    "MLAIOPS_TOKEN",
     "MLFLOW_TRACKING_URI",
     "MLFLOW_S3_ENDPOINT_URL",
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_SESSION_TOKEN",
     "S3_ENDPOINT",
 )
+
+# Operators opt extra runner variables into every step with this comma-separated
+# allowlist, for example AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY on a trusted
+# single-user host.
+PASSTHROUGH_ALLOWLIST_VARIABLE = "MLAIOPS_PIPELINE_PASSTHROUGH_ENV"
+
+# The platform's internal service token authenticates the runner as
+# pipeline-engine for every run. No step needs it and the allowlist cannot
+# forward it.
+NEVER_FORWARDED_ENVIRONMENT = frozenset({"MLAIOPS_TOKEN", "MLAIOPS_INTERNAL_TOKEN"})
 
 
 DEFAULT_LOG_STREAM_LIMIT_BYTES = 5 * 1024 * 1024
@@ -189,6 +198,18 @@ def _dependency_output(logs: str) -> Any:
     return logs
 
 
+def passthrough_names() -> tuple[str, ...]:
+    """Runner variables forwarded to every step: the fixed connection settings
+    plus the operator allowlist, minus the runner's own service token."""
+    extra = [
+        name.strip()
+        for name in os.environ.get(PASSTHROUGH_ALLOWLIST_VARIABLE, "").split(",")
+        if name.strip()
+    ]
+    names = dict.fromkeys([*PASSTHROUGH_ENVIRONMENT, *extra])
+    return tuple(name for name in names if name not in NEVER_FORWARDED_ENVIRONMENT)
+
+
 def _container_environment(
     run_id: str,
     project_id: str,
@@ -196,7 +217,7 @@ def _container_environment(
     parameters: dict[str, Any],
     dependency_outputs: dict[str, Any],
 ) -> dict[str, str]:
-    environment = {name: os.environ[name] for name in PASSTHROUGH_ENVIRONMENT if name in os.environ}
+    environment = {name: os.environ[name] for name in passthrough_names() if name in os.environ}
     environment.update({str(key): str(value) for key, value in (job.get("environment") or {}).items()})
     environment.update(
         {

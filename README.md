@@ -59,6 +59,23 @@ deployments named `mlaiops` and executes their runs. Optional limits:
 | `MLAIOPS_PIPELINE_PIDS_LIMIT` | `256` | Process limit per step container (at most `4096`) |
 | `MLAIOPS_PIPELINE_LOG_LIMIT_BYTES` | `65536` | Output tail kept on each step (at most 1 MiB) |
 | `MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Output streamed to the gateway per step (at most 100 MiB) |
+| `MLAIOPS_PIPELINE_PASSTHROUGH_ENV` | none | Comma-separated runner variables forwarded to every step container, for example `AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY` |
+
+### Step credentials
+
+Step containers run images named in pipeline definitions, so they do not inherit
+the runner's credentials. Every step receives `KIONGA_RUN_ID`, `KIONGA_PROJECT_ID`,
+`KIONGA_STEP_NAME`, `KIONGA_PARAMETERS`, `KIONGA_DEPENDENCY_OUTPUTS`, its own
+`env` from the definition, and these connection settings when the runner has
+them: `MLAIOPS_URL`, `MLFLOW_TRACKING_URI`, `MLFLOW_S3_ENDPOINT_URL` and
+`S3_ENDPOINT`.
+
+The runner's object-store keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+`AWS_SESSION_TOKEN`) reach a step only when it declares them in its own `env`, or
+when an operator lists them in `MLAIOPS_PIPELINE_PASSTHROUGH_ENV`. The allowlist
+applies to every step on the runner, so use it only on a trusted single-user
+host and prefer keys scoped to the buckets steps need. `MLAIOPS_TOKEN`, the
+platform's internal service token, is never forwarded, even when listed.
 
 ## Documentation
 
