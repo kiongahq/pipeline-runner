@@ -46,8 +46,10 @@ The container executor.
   `no-new-privileges`, a PID limit, labels and the optional network.
 - `_container_environment` gives each step `KIONGA_RUN_ID`, `KIONGA_PROJECT_ID`,
   `KIONGA_STEP_NAME`, `KIONGA_PARAMETERS` and `KIONGA_DEPENDENCY_OUTPUTS` (JSON),
-  the step's own `environment`, and a fixed passthrough list
-  (`PASSTHROUGH_ENVIRONMENT`: gateway URL and token, MLflow and S3 settings).
+  the step's own `environment`, the connection settings in
+  `PASSTHROUGH_ENVIRONMENT` (gateway, MLflow and S3 endpoints, no credentials)
+  and the operator allowlist `MLAIOPS_PIPELINE_PASSTHROUGH_ENV`
+  (`passthrough_names`). `MLAIOPS_TOKEN` is never forwarded.
 - `_dependency_output` reads a step's output from its logs: the whole output if it
   is JSON, else the last line if that is JSON, else the raw text.
 - `pipeline_definition` is the flow. It reuses outputs listed in the definition's
@@ -57,10 +59,30 @@ The container executor.
 ### `pipelines/report.py`
 
 `report_step` posts step transitions to `POST /api/v1/pipelines/runs/{id}/steps`;
-the gateway recomputes run status and progress. `reported_step` brackets a block
+the gateway recomputes run status and progress. Each report carries an
+`Idempotency-Key` header (uuid5 of run, step, attempt and status) and an
+`X-Kionga-Report-Seq` header that increases strictly per run (seeded from the wall
+clock in microseconds, so it also increases across restarts). Both are headers
+because the gateway rejects unknown JSON fields. Transitions of one step are sent
+one at a time, in order. 5xx, 429 and transport errors are retried with
+exponential backoff and full jitter, up to 15 seconds for `running` and
+`MLAIOPS_PIPELINE_REPORT_DEADLINE_SECONDS` (default 120) for terminal reports;
+other 4xx answers are not retried. Terminal reports are written to the outbox
+(`MLAIOPS_PIPELINE_REPORT_OUTBOX`, default `~/.kionga/report-outbox`, files mode
+0600, no credentials) before sending and removed once the gateway answers.
+`serve.py` replays what is left, oldest first, from a background thread at startup
+and every minute, so a run finishes once the gateway is back, without a restart. `reported_step` brackets a block
 with running and succeeded or failed reports. `LogShipper` streams container output
 to `POST /api/v1/pipelines/runs/{id}/logs` in batches, up to the stream cap.
 Reporting is best effort: a gateway outage never fails a run.
+
+### `pipelines/redact.py`
+
+`Redactor` masks known secret values with `***`. Each step attempt builds one from
+the runner's credentials and the secret-named values of the step environment
+(`_step_redactor`). `LogShipper.add`, `_bounded_logs`, the failure messages,
+`report_step` and the flow failure exception all pass through it. Text cut at a
+length cap also has a dangling fragment of a secret masked.
 
 ### `pipelines/training.py`
 
@@ -83,9 +105,17 @@ reuse and log caps. `test_pipelines.py` covers the training tasks and reporting.
   timed out.
 - **Bounded everything.** Parallelism, timeouts, PID limits and log sizes are
   clamped to fixed maximums (64 parallel steps, 24 hours, 4096 processes, 1 MiB
-  kept per step, 100 MiB streamed per step) whatever the environment says.
+  kept per step, 100 MiB streamed per step) whatever the environment says. The log
+  follower buffers at most 16 KiB of an unfinished line (`MAX_LOG_LINE_BYTES`),
+  so a container that never writes a newline cannot exhaust runner memory.
 - **Step containers never get the Docker socket.** Only the runner holds it.
-- **Reporting never fails a run.** Gateway errors are printed and ignored.
+- **Step containers never get the runner's credentials.** The service token stays
+  in the runner; object-store keys need the step's own `env` or the operator
+  allowlist.
+- **No secret value leaves the runner.** Everything sent to the gateway or kept in
+  Prefect state passes through a `Redactor`.
+- **Reporting never fails a run.** Gateway errors are retried, then printed; an
+  undelivered terminal report waits in the outbox for the next start.
 
 ## How it connects to other components
 

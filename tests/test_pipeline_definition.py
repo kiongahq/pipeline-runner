@@ -425,3 +425,59 @@ def test_log_streaming_is_capped(monkeypatch):
     shipper.close()
     assert len(shipped) == 4  # three 41-byte lines exceed 100 bytes, then the notice
     assert "truncated" in shipped[-1]["message"]
+
+
+def _fake_secret(label: str) -> str:
+    # Assembled at runtime so secret scanners never see a literal credential.
+    return "-".join(["fake", label, "value", "0123456789"])
+
+
+def test_container_environment_withholds_runner_credentials_by_default(monkeypatch):
+    monkeypatch.delenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", raising=False)
+    monkeypatch.setenv("MLAIOPS_URL", "http://gateway:8080")
+    monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
+    monkeypatch.setenv("MLAIOPS_TOKEN", _fake_secret("service"))
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", _fake_secret("access"))
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _fake_secret("secret"))
+    monkeypatch.setenv("AWS_SESSION_TOKEN", _fake_secret("session"))
+
+    environment = pipeline_module._container_kwargs("run-env", "prj-1", container_job(), {}, {})["environment"]
+
+    for name in ("MLAIOPS_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+        assert name not in environment
+    assert not any(value.startswith("fake-") for value in environment.values())
+    assert environment["MLAIOPS_URL"] == "http://gateway:8080"
+    assert environment["MLFLOW_TRACKING_URI"] == "http://mlflow:5000"
+
+
+def test_container_environment_forwards_only_the_operator_allowlist(monkeypatch):
+    monkeypatch.setenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", " AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY ,EXTRA_SETTING,")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", _fake_secret("access"))
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _fake_secret("secret"))
+    monkeypatch.setenv("AWS_SESSION_TOKEN", _fake_secret("session"))
+    monkeypatch.setenv("EXTRA_SETTING", "on")
+
+    environment = pipeline_module._container_kwargs("run-env", "prj-1", container_job(), {}, {})["environment"]
+
+    assert environment["AWS_ACCESS_KEY_ID"] == _fake_secret("access")
+    assert environment["AWS_SECRET_ACCESS_KEY"] == _fake_secret("secret")
+    assert environment["EXTRA_SETTING"] == "on"
+    assert "AWS_SESSION_TOKEN" not in environment
+
+
+def test_allowlist_cannot_forward_the_runner_service_token(monkeypatch):
+    monkeypatch.setenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", "MLAIOPS_TOKEN,MLAIOPS_INTERNAL_TOKEN")
+    monkeypatch.setenv("MLAIOPS_TOKEN", _fake_secret("service"))
+    monkeypatch.setenv("MLAIOPS_INTERNAL_TOKEN", _fake_secret("internal"))
+
+    environment = pipeline_module._container_kwargs("run-env", "prj-1", container_job(), {}, {})["environment"]
+
+    assert "MLAIOPS_TOKEN" not in environment
+    assert "MLAIOPS_INTERNAL_TOKEN" not in environment
+
+
+def test_step_environment_still_reaches_its_own_container(monkeypatch):
+    monkeypatch.delenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", raising=False)
+    job = container_job(environment={"AWS_ACCESS_KEY_ID": "declared-by-step"})
+    environment = pipeline_module._container_kwargs("run-env", "prj-1", job, {}, {})["environment"]
+    assert environment["AWS_ACCESS_KEY_ID"] == "declared-by-step"
