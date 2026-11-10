@@ -26,8 +26,8 @@ SECRET_NAME_PATTERN = re.compile(
 
 # Runner variables that are secret whatever the pattern says.
 RUNNER_SECRET_NAMES = (
-    "MLAIOPS_TOKEN",
-    "MLAIOPS_INTERNAL_TOKEN",
+    "KIONGA_TOKEN",
+    "KIONGA_INTERNAL_TOKEN",
     "AWS_ACCESS_KEY_ID",
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",

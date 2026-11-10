@@ -43,25 +43,25 @@ and a gateway:
 docker run --rm \
   -v /var/run/docker.sock:/var/run/docker.sock \
   -e PREFECT_API_URL=http://prefect-server:4200/api \
-  -e MLAIOPS_URL=http://gateway:8080 \
-  -e MLAIOPS_TOKEN="$MLAIOPS_INTERNAL_TOKEN" \
+  -e KIONGA_URL=http://gateway:8080 \
+  -e KIONGA_TOKEN="$KIONGA_INTERNAL_TOKEN" \
   ghcr.io/kiongahq/pipeline-runner:dev
 ```
 
 It registers the `pipeline-definition` and `training-pipeline` flows as
-deployments named `mlaiops` and executes their runs. Optional limits:
+deployments named `kionga` and executes their runs. Optional limits:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `MLAIOPS_PIPELINE_NETWORK` | none | Docker network that step containers join |
-| `MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS` | `3600` | Step timeout when the step sets none (at most 24 hours) |
-| `MLAIOPS_PIPELINE_MAX_PARALLEL` | `8` | Steps running at once in one run (at most `64`) |
-| `MLAIOPS_PIPELINE_PIDS_LIMIT` | `256` | Process limit per step container (at most `4096`) |
-| `MLAIOPS_PIPELINE_LOG_LIMIT_BYTES` | `65536` | Output tail kept on each step (at most 1 MiB) |
-| `MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Output streamed to the gateway per step (at most 100 MiB). Lines longer than 16 KiB are cut and marked `[line truncated]`; `\r` progress updates are separate lines |
-| `MLAIOPS_PIPELINE_REPORT_DEADLINE_SECONDS` | `120` | How long a terminal step report is retried while the gateway fails (at most 3600) |
-| `MLAIOPS_PIPELINE_REPORT_OUTBOX` | `~/.kionga/report-outbox` | Directory for terminal step reports not yet delivered, replayed at startup and every minute; empty disables it. Mount a volume here to keep reports across container re-creation |
-| `MLAIOPS_PIPELINE_PASSTHROUGH_ENV` | none | Comma-separated runner variables forwarded to every step container, for example `AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY` |
+| `KIONGA_PIPELINE_NETWORK` | none | Docker network that step containers join |
+| `KIONGA_PIPELINE_JOB_TIMEOUT_SECONDS` | `3600` | Step timeout when the step sets none (at most 24 hours) |
+| `KIONGA_PIPELINE_MAX_PARALLEL` | `8` | Steps running at once in one run (at most `64`) |
+| `KIONGA_PIPELINE_PIDS_LIMIT` | `256` | Process limit per step container (at most `4096`) |
+| `KIONGA_PIPELINE_LOG_LIMIT_BYTES` | `65536` | Output tail kept on each step (at most 1 MiB) |
+| `KIONGA_PIPELINE_LOG_STREAM_LIMIT_BYTES` | 5 MiB | Output streamed to the gateway per step (at most 100 MiB). Lines longer than 16 KiB are cut and marked `[line truncated]`; `\r` progress updates are separate lines |
+| `KIONGA_PIPELINE_REPORT_DEADLINE_SECONDS` | `120` | How long a terminal step report is retried while the gateway fails (at most 3600) |
+| `KIONGA_PIPELINE_REPORT_OUTBOX` | `~/.kionga/report-outbox` | Directory for terminal step reports not yet delivered, replayed at startup and every minute; empty disables it. Mount a volume here to keep reports across container re-creation |
+| `KIONGA_PIPELINE_PASSTHROUGH_ENV` | none | Comma-separated runner variables forwarded to every step container, for example `AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY` |
 
 ### Step credentials
 
@@ -69,14 +69,14 @@ Step containers run images named in pipeline definitions, so they do not inherit
 the runner's credentials. Every step receives `KIONGA_RUN_ID`, `KIONGA_PROJECT_ID`,
 `KIONGA_STEP_NAME`, `KIONGA_PARAMETERS`, `KIONGA_DEPENDENCY_OUTPUTS`, its own
 `env` from the definition, and these connection settings when the runner has
-them: `MLAIOPS_URL`, `MLFLOW_TRACKING_URI`, `MLFLOW_S3_ENDPOINT_URL` and
+them: `KIONGA_URL`, `MLFLOW_TRACKING_URI`, `MLFLOW_S3_ENDPOINT_URL` and
 `S3_ENDPOINT`.
 
 The runner's object-store keys (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
 `AWS_SESSION_TOKEN`) reach a step only when it declares them in its own `env`, or
-when an operator lists them in `MLAIOPS_PIPELINE_PASSTHROUGH_ENV`. The allowlist
+when an operator lists them in `KIONGA_PIPELINE_PASSTHROUGH_ENV`. The allowlist
 applies to every step on the runner, so use it only on a trusted single-user
-host and prefer keys scoped to the buckets steps need. `MLAIOPS_TOKEN`, the
+host and prefer keys scoped to the buckets steps need. `KIONGA_TOKEN`, the
 platform's internal service token, is never forwarded, even when listed.
 
 Before step output leaves the runner, every value that must not be stored is

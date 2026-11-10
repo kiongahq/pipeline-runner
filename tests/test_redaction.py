@@ -20,7 +20,7 @@ def fake(label: str) -> str:
 
 @pytest.mark.parametrize(
     "name",
-    ["MLAIOPS_TOKEN", "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "DB_PASSWORD", "PASSWORD",
+    ["KIONGA_TOKEN", "AWS_SECRET_ACCESS_KEY", "AWS_ACCESS_KEY_ID", "DB_PASSWORD", "PASSWORD",
      "OPENAI_API_KEY", "CLIENT_SECRET_VALUE", "GITHUB_TOKEN", "SERVICE_CREDENTIALS", "KEY"],
 )
 def test_secret_name_patterns_match(name):
@@ -75,13 +75,13 @@ def _run_printing_environment(monkeypatch, status: int, chunks: list[bytes], job
 
 def test_runner_token_printed_by_a_step_is_masked_in_logs_and_success_message(monkeypatch):
     token = fake("runner")
-    monkeypatch.setenv("MLAIOPS_TOKEN", token)
+    monkeypatch.setenv("KIONGA_TOKEN", token)
     shipped, reports, error = _run_printing_environment(
-        monkeypatch, 0, [f"MLAIOPS_TOKEN={token}\n".encode(), b"done\n"]
+        monkeypatch, 0, [f"KIONGA_TOKEN={token}\n".encode(), b"done\n"]
     )
     assert error is None
     messages = [entry["message"] for entry in shipped]
-    assert messages == [f"MLAIOPS_TOKEN={MASK}", "done"]
+    assert messages == [f"KIONGA_TOKEN={MASK}", "done"]
     final_args, _ = reports[-1]
     assert final_args[2] == "succeeded"
     assert token not in final_args[3] and MASK in final_args[3]
@@ -121,7 +121,7 @@ def test_bounded_tail_masks_a_secret_cut_by_the_front_of_the_tail():
 
 def test_flow_failure_exception_is_redacted(monkeypatch):
     secret = fake("flow")
-    monkeypatch.setenv("MLAIOPS_TOKEN", secret)
+    monkeypatch.setenv("KIONGA_TOKEN", secret)
 
     class Failed:
         def result(self):
@@ -139,7 +139,7 @@ def test_report_step_redacts_runner_credentials_from_any_message(monkeypatch):
     import httpx
 
     secret = fake("report")
-    monkeypatch.setenv("MLAIOPS_URL", "http://gateway")
+    monkeypatch.setenv("KIONGA_URL", "http://gateway")
     monkeypatch.setenv("AWS_SESSION_TOKEN", secret)
     sent = []
 

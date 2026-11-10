@@ -88,7 +88,7 @@ def register_with_control_plane(
     """Register the trained model version in the platform registry. The
     version comes from MLflow when available, otherwise from the run id, so
     repeated runs never collide."""
-    gateway = os.environ.get("MLAIOPS_URL")
+    gateway = os.environ.get("KIONGA_URL")
     if not gateway or not project_id:
         return
     import time as _time
@@ -100,11 +100,11 @@ def register_with_control_plane(
         json={
             "project_id": project_id,
             "name": MODEL_NAME,
-            "version": version or os.environ.get("MLAIOPS_MODEL_VERSION") or str(int(_time.time())),
+            "version": version or os.environ.get("KIONGA_MODEL_VERSION") or str(int(_time.time())),
             "artifact_uri": artifact_uri or f"models:/{MODEL_NAME}/latest",
             "metrics": metrics,
         },
-        headers={"X-MLAIOps-Actor": "pipeline-engine", **({"Authorization": f"Bearer {os.environ['MLAIOPS_TOKEN']}"} if os.environ.get("MLAIOPS_TOKEN") else {})},
+        headers={"X-Kionga-Actor": "pipeline-engine", **({"Authorization": f"Bearer {os.environ['KIONGA_TOKEN']}"} if os.environ.get("KIONGA_TOKEN") else {})},
         timeout=10,
     ).raise_for_status()
 
