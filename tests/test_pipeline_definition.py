@@ -111,9 +111,9 @@ def test_container_job_applies_contract_and_cleans_up(monkeypatch):
     monkeypatch.setattr(pipeline_module, "_docker_client", lambda: client)
     monkeypatch.setattr(pipeline_module, "_gpu_device_requests", lambda count: [f"gpu:{count}"])
     monkeypatch.setattr(pipeline_module, "report_step", lambda *args, **facts: reports.append(args + (facts,)))
-    monkeypatch.setenv("MLAIOPS_PIPELINE_NETWORK", "mlaiops_default")
-    monkeypatch.setenv("MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS", "45")
-    monkeypatch.setenv("MLAIOPS_PIPELINE_PIDS_LIMIT", "64")
+    monkeypatch.setenv("KIONGA_PIPELINE_NETWORK", "kionga_default")
+    monkeypatch.setenv("KIONGA_PIPELINE_JOB_TIMEOUT_SECONDS", "45")
+    monkeypatch.setenv("KIONGA_PIPELINE_PIDS_LIMIT", "64")
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
 
     output = pipeline_module.run_container_job.fn(
@@ -131,7 +131,7 @@ def test_container_job_applies_contract_and_cleans_up(monkeypatch):
     assert kwargs["nano_cpus"] == 500_000_000
     assert kwargs["mem_limit"] == 2 * (1 << 30)
     assert kwargs["device_requests"] == ["gpu:1"]
-    assert kwargs["network"] == "mlaiops_default"
+    assert kwargs["network"] == "kionga_default"
     assert kwargs["cap_drop"] == ["ALL"]
     assert kwargs["security_opt"] == ["no-new-privileges"]
     assert kwargs["pids_limit"] == 64
@@ -191,8 +191,8 @@ def test_logs_are_a_bounded_tail():
 
 
 def test_container_kwargs_apply_safe_default_compute_limits(monkeypatch):
-    monkeypatch.delenv("MLAIOPS_PIPELINE_NETWORK", raising=False)
-    monkeypatch.setenv("MLAIOPS_PIPELINE_PIDS_LIMIT", "999999")
+    monkeypatch.delenv("KIONGA_PIPELINE_NETWORK", raising=False)
+    monkeypatch.setenv("KIONGA_PIPELINE_PIDS_LIMIT", "999999")
     kwargs = pipeline_module._container_kwargs(
         "run-defaults",
         "prj-1",
@@ -433,25 +433,25 @@ def _fake_secret(label: str) -> str:
 
 
 def test_container_environment_withholds_runner_credentials_by_default(monkeypatch):
-    monkeypatch.delenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", raising=False)
-    monkeypatch.setenv("MLAIOPS_URL", "http://gateway:8080")
+    monkeypatch.delenv("KIONGA_PIPELINE_PASSTHROUGH_ENV", raising=False)
+    monkeypatch.setenv("KIONGA_URL", "http://gateway:8080")
     monkeypatch.setenv("MLFLOW_TRACKING_URI", "http://mlflow:5000")
-    monkeypatch.setenv("MLAIOPS_TOKEN", _fake_secret("service"))
+    monkeypatch.setenv("KIONGA_TOKEN", _fake_secret("service"))
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", _fake_secret("access"))
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _fake_secret("secret"))
     monkeypatch.setenv("AWS_SESSION_TOKEN", _fake_secret("session"))
 
     environment = pipeline_module._container_kwargs("run-env", "prj-1", container_job(), {}, {})["environment"]
 
-    for name in ("MLAIOPS_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+    for name in ("KIONGA_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
         assert name not in environment
     assert not any(value.startswith("fake-") for value in environment.values())
-    assert environment["MLAIOPS_URL"] == "http://gateway:8080"
+    assert environment["KIONGA_URL"] == "http://gateway:8080"
     assert environment["MLFLOW_TRACKING_URI"] == "http://mlflow:5000"
 
 
 def test_container_environment_forwards_only_the_operator_allowlist(monkeypatch):
-    monkeypatch.setenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", " AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY ,EXTRA_SETTING,")
+    monkeypatch.setenv("KIONGA_PIPELINE_PASSTHROUGH_ENV", " AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY ,EXTRA_SETTING,")
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", _fake_secret("access"))
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _fake_secret("secret"))
     monkeypatch.setenv("AWS_SESSION_TOKEN", _fake_secret("session"))
@@ -466,18 +466,18 @@ def test_container_environment_forwards_only_the_operator_allowlist(monkeypatch)
 
 
 def test_allowlist_cannot_forward_the_runner_service_token(monkeypatch):
-    monkeypatch.setenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", "MLAIOPS_TOKEN,MLAIOPS_INTERNAL_TOKEN")
-    monkeypatch.setenv("MLAIOPS_TOKEN", _fake_secret("service"))
-    monkeypatch.setenv("MLAIOPS_INTERNAL_TOKEN", _fake_secret("internal"))
+    monkeypatch.setenv("KIONGA_PIPELINE_PASSTHROUGH_ENV", "KIONGA_TOKEN,KIONGA_INTERNAL_TOKEN")
+    monkeypatch.setenv("KIONGA_TOKEN", _fake_secret("service"))
+    monkeypatch.setenv("KIONGA_INTERNAL_TOKEN", _fake_secret("internal"))
 
     environment = pipeline_module._container_kwargs("run-env", "prj-1", container_job(), {}, {})["environment"]
 
-    assert "MLAIOPS_TOKEN" not in environment
-    assert "MLAIOPS_INTERNAL_TOKEN" not in environment
+    assert "KIONGA_TOKEN" not in environment
+    assert "KIONGA_INTERNAL_TOKEN" not in environment
 
 
 def test_step_environment_still_reaches_its_own_container(monkeypatch):
-    monkeypatch.delenv("MLAIOPS_PIPELINE_PASSTHROUGH_ENV", raising=False)
+    monkeypatch.delenv("KIONGA_PIPELINE_PASSTHROUGH_ENV", raising=False)
     job = container_job(environment={"AWS_ACCESS_KEY_ID": "declared-by-step"})
     environment = pipeline_module._container_kwargs("run-env", "prj-1", job, {}, {})["environment"]
     assert environment["AWS_ACCESS_KEY_ID"] == "declared-by-step"

@@ -38,9 +38,9 @@ DEFAULT_JOB_MEMORY = "1Gi"
 
 # Connection settings every step may receive: endpoints only, never a
 # credential. Step containers run images named by pipeline authors, so the
-# runner's own identity (MLAIOPS_TOKEN) and object-store keys stay in the runner.
+# runner's own identity (KIONGA_TOKEN) and object-store keys stay in the runner.
 PASSTHROUGH_ENVIRONMENT = (
-    "MLAIOPS_URL",
+    "KIONGA_URL",
     "MLFLOW_TRACKING_URI",
     "MLFLOW_S3_ENDPOINT_URL",
     "S3_ENDPOINT",
@@ -49,12 +49,12 @@ PASSTHROUGH_ENVIRONMENT = (
 # Operators opt extra runner variables into every step with this comma-separated
 # allowlist, for example AWS_ACCESS_KEY_ID,AWS_SECRET_ACCESS_KEY on a trusted
 # single-user host.
-PASSTHROUGH_ALLOWLIST_VARIABLE = "MLAIOPS_PIPELINE_PASSTHROUGH_ENV"
+PASSTHROUGH_ALLOWLIST_VARIABLE = "KIONGA_PIPELINE_PASSTHROUGH_ENV"
 
 # The platform's internal service token authenticates the runner as
 # pipeline-engine for every run. No step needs it and the allowlist cannot
 # forward it.
-NEVER_FORWARDED_ENVIRONMENT = frozenset({"MLAIOPS_TOKEN", "MLAIOPS_INTERNAL_TOKEN"})
+NEVER_FORWARDED_ENVIRONMENT = frozenset({"KIONGA_TOKEN", "KIONGA_INTERNAL_TOKEN"})
 
 
 DEFAULT_LOG_STREAM_LIMIT_BYTES = 5 * 1024 * 1024
@@ -262,11 +262,11 @@ def _container_kwargs(
         "cap_drop": ["ALL"],
         "security_opt": ["no-new-privileges"],
         "pids_limit": _bounded_setting(
-            "MLAIOPS_PIPELINE_PIDS_LIMIT", DEFAULT_PIDS_LIMIT, MAX_PIDS_LIMIT
+            "KIONGA_PIPELINE_PIDS_LIMIT", DEFAULT_PIDS_LIMIT, MAX_PIDS_LIMIT
         ),
         "init": True,
     }
-    if network := os.environ.get("MLAIOPS_PIPELINE_NETWORK"):
+    if network := os.environ.get("KIONGA_PIPELINE_NETWORK"):
         kwargs["network"] = network
     if cpu := _cpu_nanos(str(resources.get("cpu") or DEFAULT_JOB_CPU)):
         kwargs["nano_cpus"] = cpu
@@ -380,7 +380,7 @@ def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, ru
     container = None
     logs = ""
     facts: dict[str, Any] = {"workload_kind": "docker-container"}
-    limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
+    limit = _bounded_setting("KIONGA_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
     shipper = None
     follower = None
     try:
@@ -390,7 +390,7 @@ def _run_container_attempt(client: Any, kwargs: dict[str, Any], timeout: int, ru
         facts["image_digest"] = _image_digest(container)
         if run_id:
             shipper = LogShipper(run_id, node, attempt, facts["workload_id"], redactor=redactor)
-            stream_limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_STREAM_LIMIT_BYTES", DEFAULT_LOG_STREAM_LIMIT_BYTES, MAX_LOG_STREAM_LIMIT_BYTES)
+            stream_limit = _bounded_setting("KIONGA_PIPELINE_LOG_STREAM_LIMIT_BYTES", DEFAULT_LOG_STREAM_LIMIT_BYTES, MAX_LOG_STREAM_LIMIT_BYTES)
             follower = threading.Thread(target=_follow_logs, args=(container, shipper, stream_limit), daemon=True)
             follower.start()
         result = container.wait(timeout=timeout)
@@ -433,7 +433,7 @@ def _job_timeout(job: dict[str, Any]) -> int:
     configured = int(job.get("timeout_seconds") or 0)
     if configured > 0:
         return min(configured, 24 * 60 * 60)
-    return _bounded_setting("MLAIOPS_PIPELINE_JOB_TIMEOUT_SECONDS", DEFAULT_JOB_TIMEOUT_SECONDS, 24 * 60 * 60)
+    return _bounded_setting("KIONGA_PIPELINE_JOB_TIMEOUT_SECONDS", DEFAULT_JOB_TIMEOUT_SECONDS, 24 * 60 * 60)
 
 
 @task(name="pipeline-container-job")
@@ -451,7 +451,7 @@ def run_container_job(
     backoff = max(int(job.get("retry_backoff_seconds", 0) or 0), 0)
     attempts = retries + 1
     timeout = _job_timeout(job)
-    limit = _bounded_setting("MLAIOPS_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
+    limit = _bounded_setting("KIONGA_PIPELINE_LOG_LIMIT_BYTES", DEFAULT_LOG_LIMIT_BYTES, MAX_LOG_LIMIT_BYTES)
     client = _docker_client()
     last_error: Exception | None = None
     try:
@@ -607,7 +607,7 @@ def pipeline_definition(
     parameters = parameters or {}
     jobs = [job for layer in definition_layers(definition) for job in layer]
     max_parallel = int(definition.get("max_parallelism") or 0) or _bounded_setting(
-        "MLAIOPS_PIPELINE_MAX_PARALLEL", DEFAULT_MAX_PARALLEL, MAX_PARALLEL
+        "KIONGA_PIPELINE_MAX_PARALLEL", DEFAULT_MAX_PARALLEL, MAX_PARALLEL
     )
 
     reuse = definition.get("reuse") or {}

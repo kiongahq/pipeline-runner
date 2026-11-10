@@ -7,7 +7,7 @@ or step reporting.
 ## Bird's-eye view
 
 The runner is a Prefect worker process. `python -m pipelines.serve` registers two
-Prefect flows as deployments named `mlaiops` and executes their runs in-process:
+Prefect flows as deployments named `kionga` and executes their runs in-process:
 
 - `pipeline-definition` runs a user's pipeline: a validated graph of container
   steps, one Docker container per step attempt.
@@ -48,8 +48,8 @@ The container executor.
   `KIONGA_STEP_NAME`, `KIONGA_PARAMETERS` and `KIONGA_DEPENDENCY_OUTPUTS` (JSON),
   the step's own `environment`, the connection settings in
   `PASSTHROUGH_ENVIRONMENT` (gateway, MLflow and S3 endpoints, no credentials)
-  and the operator allowlist `MLAIOPS_PIPELINE_PASSTHROUGH_ENV`
-  (`passthrough_names`). `MLAIOPS_TOKEN` is never forwarded.
+  and the operator allowlist `KIONGA_PIPELINE_PASSTHROUGH_ENV`
+  (`passthrough_names`). `KIONGA_TOKEN` is never forwarded.
 - `_dependency_output` reads a step's output from its logs: the whole output if it
   is JSON, else the last line if that is JSON, else the raw text.
 - `pipeline_definition` is the flow. It reuses outputs listed in the definition's
@@ -66,9 +66,9 @@ clock in microseconds, so it also increases across restarts). Both are headers
 because the gateway rejects unknown JSON fields. Transitions of one step are sent
 one at a time, in order. 5xx, 429 and transport errors are retried with
 exponential backoff and full jitter, up to 15 seconds for `running` and
-`MLAIOPS_PIPELINE_REPORT_DEADLINE_SECONDS` (default 120) for terminal reports;
+`KIONGA_PIPELINE_REPORT_DEADLINE_SECONDS` (default 120) for terminal reports;
 other 4xx answers are not retried. Terminal reports are written to the outbox
-(`MLAIOPS_PIPELINE_REPORT_OUTBOX`, default `~/.kionga/report-outbox`, files mode
+(`KIONGA_PIPELINE_REPORT_OUTBOX`, default `~/.kionga/report-outbox`, files mode
 0600, no credentials) before sending and removed once the gateway answers.
 `serve.py` replays what is left, oldest first, from a background thread at startup
 and every minute, so a run finishes once the gateway is back, without a restart. `reported_step` brackets a block
@@ -88,7 +88,7 @@ length cap also has a dangling fragment of a secret masked.
 
 The `training-pipeline` flow. Fixed random seeds make its metrics identical in
 every environment. MLflow logging and gateway registration run only when
-`MLFLOW_TRACKING_URI` and `MLAIOPS_URL` are set.
+`MLFLOW_TRACKING_URI` and `KIONGA_URL` are set.
 
 ### `tests/`
 
@@ -119,9 +119,9 @@ reuse and log caps. `test_pipelines.py` covers the training tasks and reporting.
 
 ## How it connects to other components
 
-- **platform**: the gateway submits runs to Prefect's `pipeline-definition/mlaiops`
-  and `training-pipeline/mlaiops` deployments, and receives step reports and logs.
-  `MLAIOPS_TOKEN` carries the platform's internal service token.
+- **platform**: the gateway submits runs to Prefect's `pipeline-definition/kionga`
+  and `training-pipeline/kionga` deployments, and receives step reports and logs.
+  `KIONGA_TOKEN` carries the platform's internal service token.
 - **contracts**: defines the YAML users write. The runner sees only the gateway's
   converted form.
 - **deploy**: `compose.yaml` runs the runner as root with the Docker socket

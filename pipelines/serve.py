@@ -1,7 +1,7 @@
 """Serve pipeline deployments to the Prefect server.
 
 ``python -m pipelines.serve`` registers every platform flow as a deployment
-named ``mlaiops`` (the name the gateway resolves) and executes scheduled runs
+named ``kionga`` (the name the gateway resolves) and executes scheduled runs
 in-process. This is the Compose pipeline-runner service.
 """
 
@@ -22,8 +22,8 @@ def main() -> None:
     threading.Thread(target=replay_outbox_forever, args=(threading.Event(),),
                      name="report-outbox-replay", daemon=True).start()
     serve(
-        training_pipeline.to_deployment(name="mlaiops"),
-        pipeline_definition.to_deployment(name="mlaiops"),
+        training_pipeline.to_deployment(name="kionga"),
+        pipeline_definition.to_deployment(name="kionga"),
     )
 
 

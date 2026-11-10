@@ -39,8 +39,8 @@ from .redact import Redactor, runner_redactor
 
 TERMINAL_STATUSES = frozenset({"succeeded", "failed", "skipped"})
 REPORT_NAMESPACE = uuid.UUID("6f6b8a52-58f5-4b55-9d0e-0c6a3f1e2b7d")
-OUTBOX_VARIABLE = "MLAIOPS_PIPELINE_REPORT_OUTBOX"
-DEADLINE_VARIABLE = "MLAIOPS_PIPELINE_REPORT_DEADLINE_SECONDS"
+OUTBOX_VARIABLE = "KIONGA_PIPELINE_REPORT_OUTBOX"
+DEADLINE_VARIABLE = "KIONGA_PIPELINE_REPORT_DEADLINE_SECONDS"
 DEFAULT_TERMINAL_DEADLINE_SECONDS = 120.0
 MAX_TERMINAL_DEADLINE_SECONDS = 3600.0
 PROGRESS_DEADLINE_SECONDS = 15.0
@@ -108,7 +108,7 @@ def _terminal_deadline() -> float:
 
 
 def _outbox_dir() -> Path | None:
-    """Outbox directory; MLAIOPS_PIPELINE_REPORT_OUTBOX="" disables it."""
+    """Outbox directory; KIONGA_PIPELINE_REPORT_OUTBOX="" disables it."""
     configured = os.environ.get(OUTBOX_VARIABLE)
     if configured is None:
         return Path.home() / ".kionga" / "report-outbox"
@@ -135,13 +135,13 @@ def _outbox_write(report: dict[str, Any]) -> Path | None:
 
 def _headers(report: dict[str, Any]) -> dict[str, str]:
     headers = {
-        "X-MLAIOps-Actor": "pipeline-engine",
+        "X-Kionga-Actor": "pipeline-engine",
         "Idempotency-Key": report["idempotency_key"],
         "X-Kionga-Report-Seq": str(report["seq"]),
     }
     # Read at send time, so a replayed report uses the current credential and
     # the outbox never stores one.
-    if token := os.environ.get("MLAIOPS_TOKEN"):
+    if token := os.environ.get("KIONGA_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
     return headers
 
@@ -191,7 +191,7 @@ def _deliver(gateway: str, report: dict[str, Any], deadline: float) -> str:
 def report_step(run_id: str, step: str, status: str, message: str = "", **facts) -> None:
     """Report a step transition. Optional facts: attempt, exit_code,
     workload_kind, workload_id, image_digest, at (ISO-8601 UTC)."""
-    gateway = os.environ.get("MLAIOPS_URL")
+    gateway = os.environ.get("KIONGA_URL")
     if not gateway or not run_id:
         return
     payload = {"step": step, "status": status, "message": runner_redactor().redact(message)}
@@ -215,7 +215,7 @@ def replay_outbox(deadline: float | None = None) -> dict[str, int]:
     oldest first. Stops at the first report that is still pending, so the
     gateway receives them in their original order."""
     counts = {"delivered": 0, "rejected": 0, "pending": 0}
-    directory, gateway = _outbox_dir(), os.environ.get("MLAIOPS_URL")
+    directory, gateway = _outbox_dir(), os.environ.get("KIONGA_URL")
     if directory is None or not gateway or not directory.is_dir():
         return counts
     for path in sorted(directory.glob("*.json")):
@@ -314,11 +314,11 @@ class LogShipper:
 
 
 def _post_logs(run_id: str, entries: list[dict]) -> None:
-    gateway = os.environ.get("MLAIOPS_URL")
+    gateway = os.environ.get("KIONGA_URL")
     if not gateway or not run_id or not entries:
         return
-    headers = {"X-MLAIOps-Actor": "pipeline-engine"}
-    if token := os.environ.get("MLAIOPS_TOKEN"):
+    headers = {"X-Kionga-Actor": "pipeline-engine"}
+    if token := os.environ.get("KIONGA_TOKEN"):
         headers["Authorization"] = f"Bearer {token}"
     try:
         httpx.post(f"{gateway.rstrip('/')}/api/v1/pipelines/runs/{run_id}/logs", json={"entries": entries},

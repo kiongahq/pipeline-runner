@@ -44,7 +44,7 @@ def test_reported_step_reports_failure(monkeypatch):
 
 
 def test_report_step_noop_without_gateway(monkeypatch):
-    monkeypatch.delenv("MLAIOPS_URL", raising=False)
+    monkeypatch.delenv("KIONGA_URL", raising=False)
     report_step("run-1", "x", "running")  # must not raise or call the network
 
 
@@ -57,7 +57,7 @@ def test_register_with_control_plane(monkeypatch):
         recorded.update(json.loads(request.content))
         return httpx.Response(201, json={"ok": True})
 
-    monkeypatch.setenv("MLAIOPS_URL", "http://gateway")
+    monkeypatch.setenv("KIONGA_URL", "http://gateway")
     monkeypatch.setattr(httpx, "post", lambda url, **kw: httpx.Client(
         transport=httpx.MockTransport(handler)
     ).post(url, **kw))

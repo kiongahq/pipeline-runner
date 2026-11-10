@@ -30,7 +30,7 @@ def gateway(monkeypatch):
     client = httpx.Client(transport=httpx.MockTransport(handler))
     monkeypatch.setattr(report_module, "_client", lambda: client)
     monkeypatch.setattr(report_module.time, "sleep", lambda seconds: None)
-    monkeypatch.setenv("MLAIOPS_URL", "http://gateway")
+    monkeypatch.setenv("KIONGA_URL", "http://gateway")
     yield requests, responses
     client.close()
 
@@ -72,7 +72,7 @@ def test_body_has_only_fields_the_gateway_accepts(gateway):
     body = json.loads(requests[0].content)
     assert set(body) <= {"step", "status", "message", "attempt", "exit_code", "workload_kind",
                          "workload_id", "image_digest", "at"}
-    assert requests[0].headers["X-MLAIOps-Actor"] == "pipeline-engine"
+    assert requests[0].headers["X-Kionga-Actor"] == "pipeline-engine"
 
 
 def test_report_key_is_stable_and_distinct_per_transition():
